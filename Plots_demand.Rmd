@@ -1,0 +1,1397 @@
+---
+title: "DemandDist"
+author: "Ana"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+library(viridis)
+library(sf)
+library(scales)
+```
+
+```{r}
+# Read the data from the TSV file
+urls <- c("1pc",
+          "10pc",
+          "100pc")
+# Read the data from the TSV file
+urls <- c("1pc_random",
+          "10pc_random",
+          "100pc_random")
+urls <- c("PerPersonAndAge",
+          "perLink",
+          "PerPersonAndAge")
+
+#Alter
+beforeURL <- "../10_Nachfrageverteilung_Uncombined/Alter/"
+# Read the data from the TSV file
+urls <- c("1pc",
+          "10pc",
+          "100pc")#,
+          #"1pc_random",
+          #"10pc_random",
+          #"100pc_random")
+urlsAGE <- urls
+
+
+#big
+beforeURL <- "../30_Nachfrageverteilung_DHL_0.14_big/"
+urls <- c("toRandomLinks",
+          "toRandomPersons",
+          "toPersonsByAge",
+          "toRandomLinks_small",
+          "toRandomPersons_small",
+          "toPersonsByAge_small")
+urlsAGE <- c("toRandomPersons",
+          "toPersonsByAge",
+          "toRandomPersons_small",
+          "toPersonsByAge_small")
+
+#demand size
+beforeURL <- "../34_Nachfrageverteilung_DHL_shape/Berlin/"
+urls <- c("0.14 packages per person",
+          "250.000 per shape",
+          "147.000 per shape")
+urlsAGE <- urls
+
+beforeURL <- "../34_Nachfrageverteilung_DHL_shape/Lausitz/"
+urls <- c("0.14 packages per person",
+          "14.210 per shape")
+urlsAGE <- urls
+
+#Prozente
+beforeURL <- "../40_Nachfrageverteilung_Upsampling/Lausitz_toRandomPersons/"
+urls <- c(#"1pc_noUpsampling",
+          "1pc_UpsamplingDemand",
+          "1pc_UpsamplingDemandAndPoisson",
+          #"10pc_noUpsampling",
+          "10pc_UpsamplingDemand",
+          "10pc_UpsamplingDemandAndPoisson",
+          "100pc_toRandomPersons")
+urlsUpsampled <- c("1pc_UpsamplingDemandAndPoisson","10pc_UpsamplingDemandAndPoisson")
+urlsUpsampledDemand <- c("1pc_UpsamplingDemand","10pc_UpsamplingDemand","100pc_toRandomPersons")
+#urls <- urlsUpsampled
+urlsAGE <- urls
+urlsNotUpsampled <- c("1pc_noUpsampling","10pc_noUpsampling","100pc_toRandomPersons")
+
+#Prozente2
+beforeURL <- "../40_Nachfrageverteilung_Upsampling/Berlin/"
+urls <- c("1pc_noUpsampling",
+          "1pc_UpsamplingDemand",
+          "1pc_UpsamplingDemandAndPoisson",
+          "10pc_noUpsampling",
+          "10pc_UpsamplingDemand",
+          "10pc_UpsamplingDemandAndPoisson",
+          "100pc_toPersonsByAge")
+urlsUpsampled <- c("1pc_UpsamplingDemandAndPoisson","10pc_UpsamplingDemandAndPoisson")
+urlsUpsampledDemand <- c("1pc_UpsamplingDemand","10pc_UpsamplingDemand","100pc_toPersonsByAge")
+#urls <- urlsUpsampled
+urlsAGE <- urls
+urlsNotUpsampled <- c("1pc_noUpsampling","10pc_noUpsampling","100pc_toPersonsByAge")
+
+
+#normal
+beforeURL <- "../23_Nachfrageverteilung_combined_0.14_DHL/Berlin/"
+urls <- c("toRandomLinks"#,
+          #"toRandomPersons",
+          #"toPersonsByAge"
+          )
+urlsAGE <- c("toRandomPersons",
+          "toPersonsByAge")
+
+#shape-Dateien
+shapefile_path <- "../Shape/PLZ_Gebiete_Berlin/PLZ_Gebiete_Berlin.shp"
+shapefile_path <- "../Shape/PLZ_Gebiete_Görlitz/PLZ_Gebiete_Görlitz.shp"
+berlinShape <- st_read(shapefile_path)
+
+linksLausitz <- 3201
+linksBerlin <- 422
+
+maxLinks <- linksLausitz
+maxLinks <- linksBerlin
+
+```
+
+
+```{r}
+#Anzahl Pakete
+print("Anzahl Pakete")
+for (url in urls) {
+    data = read.delim(paste0(beforeURL,url,"/outputFacilitiesFile.tsv"), header = TRUE, sep = "\t")
+    print(sum(data$size))
+}
+
+print("Zusammengefasste Lieferungen")
+for (url in urls) {
+    data = read.delim(paste0(beforeURL,url,"/outputFacilitiesFile.tsv"), header = TRUE, sep = "\t")
+    print(nrow(data %>% filter(size != 0)))
+    print(nrow(data %>% filter(type != "Pickup")))
+}
+
+print("Anzahl an Personen")
+for (url in urls) {
+    data = read.delim(paste0(beforeURL,url,"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+    print(nrow(data))
+}
+
+print("Anzahl an belieferten Personen")
+for (url in urls) {
+    data = read.delim(paste0(beforeURL,url,"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+    data = data %>% filter(demand != 0)
+    print(nrow(data))
+}
+
+print("Lieferungen mit der Größe 1")
+for (url in urls) {
+    data = read.delim(paste0(beforeURL,url,"/outputFacilitiesFile.tsv"), header = TRUE, sep = "\t")
+    print(nrow(data %>% filter(size == 1)))
+}
+```
+
+
+
+```{r}
+#Shape-Analysen zu Paketen je PLZ-Gebiet
+age_data <- data.frame()
+age_data_one <- data.frame()
+
+matchAreaAndAge <- function(data,url,age_data){
+  
+  # Umwandlung des DataFrames in ein sf-Objekt
+    data_sf <- st_as_sf(data, coords = c("x", "y"), crs = 25832)  
+    
+    data_with_region <- st_join(data_sf, berlinShape, join = st_within) %>% as.data.frame()
+    
+    result <- data_with_region %>%
+      group_by(note) %>%
+      summarise(aveAge = mean(age, na.rm = TRUE))
+    
+  # Analyse, wie viele Agenten durch age > 75 | age < 15 aussortiert werden
+    ageOut <- data_with_region %>%
+      group_by(note) %>%
+      summarise(
+        out = sum(age > 75 | age < 15, na.rm = TRUE),
+        inside = sum(age <= 75 & age >= 15, na.rm = TRUE)
+        )
+    
+    # Benenne die total_demand-Spalte um
+    names(result)[2] <- paste0(url)
+    names(ageOut)[2] <- paste0("out_",url)
+    names(ageOut)[3] <- paste0("in_",url)
+    
+    # Ergebnisse in den age_data-DataFrame ein
+    if (nrow(age_data) == 0) {
+      age_data <- result
+    } else {
+      age_data <- left_join(age_data, result, by = "note")
+    }
+    
+    age_data <- age_data %>% left_join(ageOut)
+    
+    return (age_data)
+}
+
+for (url in urlsAGE) {
+    data = read.delim(paste0(beforeURL,url,"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+    #data = read.delim(paste0(beforeURL,url,"/outputFacilitiesFile.tsv"), header = TRUE, sep = "\t")
+    #Spalten umbenennen
+    if ("demand" %in% colnames(data)) {
+      data <- data %>% rename(size = demand) %>% rename(x = xCoord) %>% rename(y = yCoord)
+    } 
+    age_data = matchAreaAndAge(data,url,age_data)
+}    
+
+matchArea <- function(data,url,final_data){
+  
+  # Umwandlung des DataFrames in ein sf-Objekt
+    data_sf <- st_as_sf(data, coords = c("x", "y"), crs = 25832)  
+    
+    data_with_region <- st_join(data_sf, berlinShape, join = st_within) %>% as.data.frame()
+    
+    result <- data_with_region %>%
+      group_by(note) %>%
+      summarise(total_demand = sum(size))
+    
+    # Benenne die total_demand-Spalte um
+    colname_total_demand <- paste0(url)
+    names(result)[2] <- colname_total_demand
+    
+    # Ffinal_data-DataFrame ein
+    if (nrow(final_data) == 0) {
+      final_data <- result
+    } else {
+      final_data <- left_join(final_data, result, by = "note")
+    }
+
+    return (final_data)
+}
+
+final_data <- data.frame()
+for (url in urls) {
+  data = read.delim(paste0(beforeURL,url,"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+  #data = read.delim(paste0(beforeURL,url,"/outputFacilitiesFile.tsv"), header = TRUE, sep = "\t")
+  #Spalten umbenennen
+  if ("demand" %in% colnames(data)) {
+    data <- data %>% rename(size = demand) %>% rename(x = xCoord) %>% rename(y = yCoord)
+  } 
+  final_data = matchArea(data %>% filter(size != 0),url,final_data)
+}
+```
+
+
+```{r}
+# Anzahl an Paketen je PLZ
+
+# Alle Spalten außer "note" in eine lange Form bringen
+summen <- c("Gesamt",colSums(final_data[, -1]))
+final_data_long <- final_data %>% rbind(summen) %>%
+  pivot_longer(cols = -note, 
+               names_to = "URL", 
+               values_to = "total_demand") %>%
+  mutate(total_demand = as.numeric(total_demand))
+
+final_data_long = final_data_long %>% 
+  mutate(URL = factor(URL,levels = urls))
+
+# Anzahl an Paketen je PLZ
+plot1 <- ggplot(final_data_long, aes(x = note, y = total_demand, fill = URL)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +
+  labs(x = NULL,
+       y = "Anzahl an Paketen",
+        fill = NULL)+
+  geom_text(aes(label = format(total_demand, big.mark = ".", decimal.mark = ",", scientific = FALSE)), 
+            vjust = -0.2, 
+            hjust = 0.5,
+            size = 3.5,
+            color = "black",
+            position = position_dodge(width = 0.9),
+            angle = 0) +
+  theme(
+        axis.line.y = element_blank(), 
+        axis.text.y =  element_blank(), 
+    axis.ticks.y = element_blank(),
+    legend.title = element_blank(), 
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    axis.line.x = element_line(color = "black"),   
+    axis.text.x = element_text(color = "black",size =10),   # Achsentext schwarz
+    axis.title.x = element_text(color = "black")   # Achsentitel schwarz
+  ) +
+  scale_x_discrete(labels = label_wrap(20)) +
+  scale_y_continuous(expand = c(0,0))+
+  coord_cartesian(ylim = c(0, 2450))
+
+ggsave(paste0(beforeURL,"Analyse/PaketeJePLZ.png"), plot1, width = 9, height = 3)
+
+# Anzahl an Paketen je PLZ - Lange Version
+plot2 <- ggplot(final_data_long, aes(x = note, y = total_demand, fill = URL)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +
+  labs(x = "PLZ-Gebiet",
+       y = "Anzahl an Paketen",
+        fill = NULL)+
+  geom_text(aes(label = total_demand), 
+            hjust = -0.1, 
+            size = 3.5,
+            color = "black",
+            position = position_dodge(width = 0.9)) +
+  coord_flip()+
+  theme(axis.text = element_text(color = "black"),
+        legend.position = "right")+
+  scale_y_discrete(labels = label_wrap(5)) 
+  
+
+ggsave(paste0(beforeURL,"Analyse/PaketeJePLZS.png"), plot2, width = 10, height = 15)
+
+print(plot1)
+
+print(plot2)
+```
+
+
+```{r}
+#Durchschnittsalter je PLZ
+
+# Alle Spalten außer "note" in eine lange Form bringen
+age_data_long <- age_data %>% 
+  pivot_longer(cols = all_of(urlsAGE), 
+               names_to = "URL", 
+               values_to = "averageAge")
+
+# Durchschnittsalter je PLZ
+plot1 <- ggplot(age_data_long, aes(x = note, y = averageAge, fill = URL)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +
+  labs(x = "PLZ-Gebiet",
+       y = "Durchschnittsalter",
+        fill = NULL)+
+  geom_text(aes(label = round(averageAge,2)), 
+            vjust = 1.2, 
+            size = 3.5,
+            color = "black",
+            position = position_dodge(width = 0.9))+
+  scale_x_discrete(labels = label_wrap(20)) 
+
+ggsave(paste0(beforeURL,"Analyse/AlterJePLZ.png"), plot1, width = 6, height = 3)
+
+print(plot1)
+
+plot2 <- plot1 + coord_flip()
+
+ggsave(paste0(beforeURL,"Analyse/AlterJePLZS.png"), plot2, width = 6, height = 3)
+
+print(plot2)
+```
+
+
+```{r}
+##########################################################################################
+#Belieferte Agenten
+data = read.delim(paste0(beforeURL,urlsAGE[1],"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+url = urlsAGE[1]
+
+#Spalten umbenennen
+if ("demand" %in% colnames(data)) {
+  data <- data %>% rename(size = demand) %>% rename(x = xCoord) %>% rename(y = yCoord)
+} 
+ 
+age_data_one <- data.frame()
+age_data_one <- matchAreaAndAge(data %>% filter(size != 0),url,age_data_one) 
+
+age_data_long <- age_data_long %>%  select(-c(starts_with("in") | starts_with("out")))  
+
+age_data_one <- age_data_one %>%
+  rename("beliefert" = !!url) %>%
+  select(-c(starts_with("in") | starts_with("out")))  %>%
+  pivot_longer(cols = beliefert, 
+               names_to = "URL", 
+               values_to = "averageAge") %>% 
+  rbind(age_data_long) %>% filter(URL == paste(url) | URL == "beliefert") %>%
+  mutate_all(~replace(., . == paste(url), "alle Agenten"))
+
+#Durchschnittsalter der belieferten Agenten
+plot <- ggplot(age_data_one, aes(x = note, y = as.numeric(averageAge), fill = URL)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +
+  labs(x = "PLZ-Gebiet",
+       y = "Durchschnittsalter",
+        fill = NULL)+
+  geom_text(aes(label = round(as.numeric(averageAge),2)), 
+            vjust = 1.2, 
+            size = 3.5,
+            color = "black",
+            position = position_dodge(width = 0.9)) +
+  scale_x_discrete(labels = label_wrap(20)) +
+  theme(axis.text = element_text(color = "black"),
+        axis.text.x = element_text(angle = 20, hjust = 1))
+
+ggsave(paste0(beforeURL,"Analyse/AlterBelAgenten.png"), plot, width = 6, height = 4)
+
+print(plot)
+
+
+##########################################################
+#Agenten je PLZ (aussortiert)
+ # Alle Spalten außer "note" in eine lange Form bringen
+age_data_agents <- data.frame()
+age_data_agents <- matchAreaAndAge(data,url,age_data_agents)  %>% 
+  pivot_longer(cols = starts_with("in") | starts_with("out") , 
+               names_to = "URL", 
+               values_to = "agents")
+
+plot1 <- ggplot(age_data_agents, aes(x = note, y = agents, fill = URL)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +
+  labs(x = "PLZ-Gebiet",
+       y = "Agenten",
+        fill = NULL)+
+  geom_text(aes(label = agents), 
+            vjust = 1.2, 
+            size = 3.5,
+            color = "black",
+            position = position_dodge(width = 0.9)) +
+  scale_x_discrete(labels = label_wrap(20)) 
+
+ggsave(paste0(beforeURL,"Analyse/Agenten.png"), plot1, width = 6, height = 3)
+
+plot2 <- ggplot(age_data_agents, aes(x = note, y = agents, fill = URL)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +
+  labs(x = "PLZ-Gebiet",
+       y = "Agenten",
+        fill = NULL)+
+  geom_text(aes(label = agents), 
+            hjust = -0.2, 
+            size = 3.5,
+            color = "black",
+            position = position_dodge(width = 0.9)) +
+  coord_flip()
+
+ggsave(paste0(beforeURL,"Analyse/AgentenS.png"), plot2, width = 6, height = 10)
+
+print(plot1)
+print(plot2)
+
+```
+
+
+```{r}
+#Altersverteilung je Szenario/Gesamtliefergebiet
+
+
+plotData <- function(data){
+  # Count the number of persons for each unique age
+  
+  print(nrow(data))
+  
+  persons_by_age <- data %>%
+    group_by(age) %>%
+    summarize(person_count = n())
+  
+  # Plot: Number of Persons for Each Age
+  plot <- ggplot(persons_by_age, aes(x = age, y = person_count)) +
+    geom_bar(stat = "identity", color = "#2FA4B1", fill = "#2FA4B1",position = "dodge", width = 0.5) +
+    geom_smooth(method = "loess", color = "red", se = FALSE) +
+    labs(x = "Alter",
+         y = "Agenten") +
+    scale_y_continuous(breaks = scales::pretty_breaks(n = 5),expand = c(0,0))+
+    scale_x_continuous(breaks = seq(5, max(persons_by_age$age), by = 5), expand = c(0.01,0))+
+    theme_classic()+
+    coord_flip()
+  
+  ggsave(paste0(beforeURL,"/Analyse/",url,"_ageDistr.png"), plot, width = 2, height = 4)
+  
+  print(plot)
+  
+}
+
+for (url in urlsAGE){
+  data <- read.table(paste0(beforeURL,url,"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+  plotData(data)
+}
+
+```
+
+
+```{r}
+#Gesamtnachfrage je ALter
+# Define age groups
+age_groups <- data.frame(
+  age_group = 1:8,
+  lower = c(0, 14, 20, 30, 40, 50, 60, 70),
+  upper = c(13, 19, 29, 39, 49, 59, 69, 1000),
+  share = c(0.0, 7.4, 18.5, 20.7, 17.1, 18.9, 11.5, 5.9),
+  "age" = c("bis 13","14 bis 19","20 bis 29","30 bis 39", "40 bis 49","50 bis 59","60 bis 69", "70 oder älter"))
+  
+
+# demand per person
+
+plotAgeDis <- function(data, url){
+total_demand_by_age <- data %>%
+    group_by(age) %>%
+    summarize(demand = sum(demand))
+plot <- ggplot(total_demand_by_age, aes(x = age, y = demand)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Alter",
+       y = "Gesamtnachfrage") +
+  theme_minimal()  
+
+ggsave(paste0(beforeURL,url,"/Analyse/",url,"_GesamtnachfrageJeAlter.png"), plot, width = 4, height = 3)
+
+print(plot)
+}
+
+
+for (url in urlsAGE){
+  data = read.table(paste0(beforeURL,url,"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t") %>% select(-c(xCoord,yCoord))
+  total_demand_by_age <- plotAgeDis(data,url)
+}
+
+```
+
+
+
+```{r}
+# Total Demand for Each Age Group with Percentage Labels/ Nachfrage je Altersstruktur
+
+
+# Function to categorize ages 
+categorize_age <- function(age) {
+  for (i in 1:nrow(age_groups)) {
+    if (age >= age_groups$lower[i] && age <= age_groups$upper[i]) {
+      return(age_groups$age_group[i])
+    }
+  }
+  return(NA)
+}
+
+# Define age groups
+age_groups <- data.frame(
+  age_group = 1:8,
+  lower = c(0, 14, 20, 30, 40, 50, 60, 70),
+  upper = c(13, 19, 29, 39, 49, 59, 69, 1000),
+  share = c(0.0,0.074,0.185,0.207,0.171,0.189,0.115,0.059),
+  age = c("bis 13","14 bis 19","20 bis 29","30 bis 39", "40 bis 49","50 bis 59","60 bis 69", "70 oder älter")
+  )
+
+demand_by_age_group <- data.frame(
+  age_group = 1:8,
+  lower = c(0, 14, 20, 30, 40, 50, 60, 70),
+  upper = c(13, 19, 29, 39, 49, 59, 69, 1000),
+  share = c(0.0,0.074,0.185,0.207,0.171,0.189,0.115,0.059)
+)
+
+plotAgeDis <- function(data, url){
+  name1 <- paste0(url)
+  
+  # Calculate total demand
+  demand_total <- sum(data$demand)
+  
+  # Categorize ages in the dataset
+  data$age_group <- sapply(data$age, categorize_age)
+
+  # Aggregate demand by age group
+  data <- data %>%
+    group_by(age_group) %>%
+    summarize(demand_per_group = sum(demand, na.rm = TRUE))
+
+  data <- data %>% mutate(!!name1 := (demand_per_group/ demand_total))  %>%
+    select(-c(demand_per_group))
+
+  # Calculate percentage of total demand for each age group
+  demand_by_age_group <- demand_by_age_group %>% left_join(data) 
+
+  return(demand_by_age_group)
+}
+
+for (url in urlsAGE){
+  print(url)
+  data = read.table(paste0(beforeURL,url,"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+  demand_by_age_group <- plotAgeDis(data,url)
+}
+
+demand_by_age_group <- demand_by_age_group%>% select(-c(lower, upper)) %>%  rename(SOLL = share) %>%
+ pivot_longer(!age_group, names_to = "Szenario", values_to = "Anteil")
+
+# Merge with age group information for plotting
+demand_by_age_group <- left_join(demand_by_age_group, age_groups, by = "age_group")
+
+demand_by_age_group = demand_by_age_group %>% 
+  mutate(Szenario = factor(Szenario,levels = c(urlsAGE,"SOLL")))
+
+# Plot 3: Total Demand for Each Age Group with Percentage Labels
+plot <- ggplot(demand_by_age_group, aes(x = factor(age, levels = age_groups$age), y = Anteil, fill = Szenario, )) +
+  geom_bar(stat = "identity",position="dodge",width = 0.8) +
+ scale_x_discrete(labels = label_wrap(8)) +
+  #  scale_x_discrete(labels = paste0("1 %","10 %","100 %","SOLL")) +
+  scale_y_continuous(labels = scales::label_percent(accuracy = 1),expand = c(0,0)) +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")#,
+                  #  labels = c("1 %","10 %","100 %","SOLL")
+                    )+
+  labs(x = NULL,
+       y = "Anteil an Paketmenge") +
+  theme_minimal()+
+  theme(axis.text = element_text(color = "black"),
+        axis.line.y = element_blank(),  # Y-Achse Linie entfernen
+    axis.ticks.y = element_blank(), # Y-Achse Ticks entfernen
+    panel.grid.major.x = element_blank(),  # Entfernt die Hauptgitterlinien
+    panel.grid.minor = element_blank(),     
+    axis.line = element_line(color = "black", linewidth   = 0.2),
+    legend.position = "right")+
+  guides(fill = guide_legend(title = NULL))  
+
+ggsave(paste0(beforeURL,"Analyse/GesamtnachfrageJeAlter.png"), plot, width = 5, height = 2)
+
+print(plot)
+```
+
+
+
+```{r}
+#Pakete je Empfänger bzw. Empfängerin
+
+demandSize <- data.frame(
+  demand = c(1:200)
+)
+
+leergänger <- data.frame(
+  demand = c(0)
+)
+
+poisson <- data.frame(
+  demand = c(1:6),
+  SOLL = c(0.5488,0.3293,0.0988,0.0198,0.003,0.0004)
+  #SOLL = rep(0, 200)
+)
+
+
+plotPackagesPerPerson <- function(data,url){
+  
+  #column name
+  name = paste0(url)
+  name2 = paste0(url,"_zero")
+  
+  # Count the number of persons with zero demand
+
+  zero_demand_count <- nrow(data %>% filter(demand == 0))
+
+  demandFrame = data.frame(
+    demand = c(1:200) 
+  )
+
+  #count persons
+  totalPersons <- nrow(data)
+  print(totalPersons)
+  print(zero_demand_count)
+
+  #group
+  graph <- data %>% filter(demand != 0) %>%
+     group_by(demand) %>%
+      summarize(frequency = n()) %>%
+      mutate(!!name := frequency/(totalPersons-zero_demand_count)) %>%
+    select(-c(frequency))
+
+  #join
+  poisson <- poisson %>% left_join(graph)
+  
+  poisson <- poisson
+  
+  return(poisson)
+}
+
+
+for (url in urlsAGE){
+  data = read.table(paste0(beforeURL,url,"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+  poisson <- plotPackagesPerPerson(data,url)
+}
+
+
+
+poisson <- poisson %>%
+  pivot_longer(!demand, names_to = "Szenario", values_to = "Anteil")
+
+poisson[is.na(poisson)] <- 0
+
+poisson = poisson %>% 
+  mutate(Szenario = factor(Szenario,levels = c(urlsAGE,"SOLL")))%>%
+  mutate(across(Szenario, ~ gsub("pc", " %", .)))%>%
+  mutate(across(Szenario, ~ gsub("_", " ", .)))%>%
+  mutate(across(Szenario, ~ gsub("random", "Poisson", .)))
+
+plot <- ggplot(poisson, aes(x = factor(demand), y = Anteil, fill = Szenario)) +
+  geom_bar(stat = "identity",position="dodge") +
+ scale_x_discrete(labels = paste0(demandSize$demand)) +
+  scale_y_continuous(labels = scales::label_percent(accuracy = 1),expand = c(0,0))+
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +  # Individuelle Blautöne
+  labs(x = "Anzahl Pakete je Empfängerin bzw. Empfänger",
+       y = "Anteil an Personen",
+       fill = NULL) +
+  theme_minimal()+
+  theme(axis.text.x = element_text(color = "black"),  
+    axis.text.y = element_text(color = "black") ,
+        axis.line.y = element_blank(),  # Y-Achse Linie entfernen
+    axis.ticks.y = element_blank(), # Y-Achse Ticks entfernen
+    panel.grid.major.x = element_blank(),  # Entfernt die Hauptgitterlinien
+    panel.grid.minor = element_blank(),     
+    axis.line = element_line(color = "black", linewidth   = 0.2),
+    legend.position = "right")+
+  geom_text(aes(label = paste0(sprintf("%.2f", Anteil * 100), " %"), 
+              hjust = ifelse(Anteil < 0.6, -0.1, 1.1),
+              color = ifelse(Anteil < 0.5, "black", "black")),  
+          position = position_dodge(width = 0.9),
+              angle = 90)+
+    scale_color_identity(guide = "none")+
+  coord_cartesian(ylim = c(0, 0.8), xlim = c(1,6))
+
+ggsave(paste0(beforeURL,"Analyse/PaketeJeEmpfänger.png"), plot, width = 6, height = 3)
+ 
+
+print(plot)
+
+
+
+```
+
+```{r}
+#Pakete je Empfänger bzw. Empfängerin Upsampling
+
+demandSize <- data.frame(
+  demand = c(1:6)
+)
+
+leergänger <- data.frame(
+  demand = c(0)
+)
+
+poisson <- data.frame(
+  demand = c(1:6),
+  SOLL = c(0.5488,0.3293,0.0988,0.0198,0.003,0.0004)
+)
+
+
+plotPackagesPerPerson <- function(data,url){
+  
+  #column name
+  name = paste0(url)
+  name2 = paste0(url,"_zero")
+  
+  # Count the number of persons with zero demand
+
+  zero_demand_count <- nrow(data %>% filter(demand == 0))
+
+  demandFrame = data.frame(
+    demand = c(1,2,3,4,5,6,7,8,9,10,11) 
+  )
+
+  #count persons
+  totalPersons <- nrow(data)
+  print(totalPersons)
+  print(zero_demand_count)
+  
+  if(grepl("Poisson",url)){
+    if(grepl("1pc",url)){
+      data <-  data %>% mutate(demand = round(demand/100),0)
+    }else
+       data <-  data %>% mutate(demand = round(demand/10),0)
+  }
+    
+  #group
+  graph <- data %>% filter(demand != 0) %>%
+     group_by(demand) %>%
+      summarize(frequency = n()) %>%
+      mutate(!!name := frequency/(totalPersons-zero_demand_count)) %>%
+    select(-c(frequency))
+
+  #join
+  poisson <- poisson %>% left_join(graph)
+  
+  poisson <- poisson
+  
+  return(poisson)
+}
+
+
+for (url in urlsAGE){
+  data = read.table(paste0(beforeURL,url,"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+  poisson <- plotPackagesPerPerson(data,url)
+}
+
+
+
+poisson <- poisson %>%
+  pivot_longer(!demand, names_to = "Szenario", values_to = "Anteil")
+
+poisson[is.na(poisson)] <- 0
+
+poisson = poisson %>% 
+  mutate(Szenario = factor(Szenario,levels = c(urlsAGE,"SOLL"))) %>%
+  mutate(demand = as.numeric(demand))
+
+plot <- ggplot(poisson %>% filter(demand < 5), aes(x = factor(demand), y = Anteil, fill = Szenario)) +
+  geom_bar(stat = "identity",position = position_dodge(width = 0.9),width = 0.7) +
+ scale_x_discrete(labels = paste0(demandSize$demand)) +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +  # Individuelle Blautöne
+  labs(x = NULL,
+       y = "Anteil an Personen",
+       fill = NULL) +
+  theme_minimal()+
+  geom_text(aes(label = paste0(sprintf("%.2f", Anteil * 100), " %"), 
+              hjust = ifelse(Anteil < 0.6, -0.1, -0.1),
+              color = ifelse(Anteil < 0.5, "black", "black")),  
+          position = position_dodge(width = 0.9),
+              angle = 90,
+          size=3.5)+
+    scale_color_identity(guide = "none")+
+  coord_cartesian(ylim = c(0, 1))+
+  theme(axis.text = element_text(color = "black"),
+    legend.title = element_blank(),  
+    panel.grid.major.x = element_blank(),  
+    panel.grid.minor = element_blank(),
+    axis.line.x = element_line(color = "black"),  # Achsenlinien schwarz
+    axis.ticks.x = element_line(color = "black"),  # Achsen-Ticks schwarz
+    axis.text = element_text(color = "black"),   # Achsentext schwarz
+    axis.title = element_text(color = "black")   # Achsentitel schwarz
+  ) +
+  scale_y_continuous(expand = c(0,0),labels = scales::percent_format(scale = 100)) 
+
+
+ggsave(paste0(beforeURL,"Analyse/PaketeJeEmpfänger2.png"), plot, width = 8, height = 3)
+ 
+
+print(plot)
+
+print(urls[2])
+data = read.table(paste0(beforeURL,urls[1],"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+```
+
+
+```{r}
+# Pakete je Link
+demandSize <- data.frame(
+  size = c(1:60)
+)
+
+leergänger <- data.frame(
+  size = c(0)
+)
+
+poisson <- data.frame(
+  size = c(1:60)
+ )
+
+poisson[is.na(poisson)] <- 0
+
+poisson$groups <- cut(c(1:60), breaks = seq(0, 60, by = 5), include.lowest = TRUE, right = FALSE,
+                       labels = c("1 bis 4", "5 bis 9", "10 bis 14", "15 bis 19", "20 bis 24",
+                            "25 bis 29", "30 bis 34", "35 bis 39", "40 bis 44", "45 bis 49",
+                            "50 bis 54","55 oder mehr"))
+
+poisson <- poisson %>% 
+  select(-size) %>% 
+  unique() %>% 
+  rbind(
+    data.frame(
+      "groups" = "0"
+      )
+    )
+
+plotPackagesPerLink <- function(data,url){
+  
+  #column name
+  name = paste0(url)
+  name1 = paste0(url,"_total")
+  
+  # Count the number of persons with zero demand
+
+  data <- data %>% filter(size != 0)
+  
+  totalFacilitiesNumber <- nrow(data)
+  maxLinks <- maxLinks
+
+  demandFrame = data.frame(
+    size = c(1:200) 
+  )
+
+
+  data$groups <- cut(data$size, breaks = c(seq(0, 55, by = 5),Inf), include.lowest = TRUE, right = FALSE,
+                       labels = c("1 bis 4", "5 bis 9", "10 bis 14", "15 bis 19", "20 bis 24",
+                            "25 bis 29", "30 bis 34", "35 bis 39", "40 bis 44", "45 bis 49",
+                            "50 bis 54","55 oder mehr"))
+
+  #for 0 demand
+  df <- data.frame(
+        "groups" = "0",
+        temp1 = 0,  
+        temp2 = 1 - totalFacilitiesNumber / maxLinks
+      ) %>%
+  setNames(c("groups", name, name1)) 
+  
+  #group
+  graph <- data %>% group_by(groups) %>%
+      summarize(frequency = n()) %>%
+      mutate(!!name := frequency/totalFacilitiesNumber) %>%
+    mutate(!!name1 := frequency/maxLinks)%>%
+    select(-c(frequency)) %>%
+    rbind( df)
+  
+  poisson <- poisson %>% group_by(groups) %>% left_join(graph)
+
+  return(poisson)
+}
+
+
+for (url in urls){
+  data = read.delim(paste0(beforeURL,url,"/outputFacilitiesFile.tsv"), header = TRUE, sep = "\t")
+  poisson <- plotPackagesPerLink(data,url)
+}
+
+  poisson[is.na(poisson)] <- 0
+
+
+
+poisson <- poisson %>%
+  pivot_longer(!groups, names_to = "Szenario", values_to = "Anteil") 
+
+totalLinks <- poisson %>% 
+  filter(!Szenario %in% urls) %>%
+  mutate(across(Szenario, ~ gsub("_total", "", .))) %>%
+  mutate(Szenario = factor(Szenario,levels = urls)) %>%
+  mutate(groups = factor(groups,levels = c("0","1 bis 4", "5 bis 9", "10 bis 14", "15 bis 19", "20 bis 24",
+                            "25 bis 29", "30 bis 34", "35 bis 39", "40 bis 44", "45 bis 49",
+                            "50 bis 54","55 oder mehr")))
+
+poisson = poisson %>%
+  filter(Szenario %in% urls) %>%
+  mutate(Szenario = factor(Szenario,levels = urls))
+
+
+plot <- ggplot(poisson, aes(x = groups, y = Anteil, fill = Szenario)) +
+  geom_bar(stat = "identity",position="dodge") +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +  # Individuelle Blautöne
+  labs(x = "Pakete je Link",
+       y = "Anteil an Links\nmit Nachfrage",
+       fill = NULL) +
+  theme_minimal()+
+    scale_color_identity(guide = "none") +
+  scale_y_continuous(expand = c(0,0),labels = scales::percent_format(scale = 100)) +
+  scale_x_discrete(labels = label_wrap(7))+
+  theme(
+    legend.title = element_blank(), 
+    legend.position = "bottom", 
+    legend.direction = "horizontal",  
+    panel.grid.major.x = element_blank(),  
+    panel.grid.minor = element_blank(),
+    axis.line.x = element_line(color = "black"),  # Achsenlinien schwarz
+    axis.ticks.x = element_line(color = "black"),  # Achsen-Ticks schwarz
+    axis.text = element_text(color = "black"),   # Achsentext schwarz
+    axis.title = element_text(color = "black")   # Achsentitel schwarz
+  ) 
+
+ggsave(paste0(beforeURL,"Analyse/PaketeJeLink.png"), plot, width = 8, height = 3)
+
+print(plot)
+
+plot <- ggplot(totalLinks, aes(x = groups, y = Anteil, fill = Szenario)) +
+  geom_bar(stat = "identity",position="dodge") +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +  # Individuelle Blautöne
+  labs(x = "Pakete je Link",
+       y = "Anteil an möglichen Links",
+       fill = NULL) +
+  theme_minimal()+
+    scale_color_identity(guide = "none") +
+  scale_y_continuous(expand = c(0,0),labels = scales::percent_format(scale = 100), limits =c(0,0.9)) +
+  scale_x_discrete(labels = label_wrap(7))+
+  theme(
+    legend.title = element_blank(), 
+    legend.position = "bottom", 
+    legend.direction = "horizontal",  
+    panel.grid.major.x = element_blank(),  
+    panel.grid.minor = element_blank(),
+    axis.line.x = element_line(color = "black"),  # Achsenlinien schwarz
+    axis.ticks.x = element_line(color = "black"),  # Achsen-Ticks schwarz
+    axis.text = element_text(color = "black"),   # Achsentext schwarz
+    axis.title = element_text(color = "black")   # Achsentitel schwarz
+  ) 
+
+ggsave(paste0(beforeURL,"Analyse/PaketeJeTotalLink.png"), plot, width = 8, height = 3)
+
+print(plot)
+ 
+
+# Anzahl an belieferten Links#############################################################
+
+sizeTable <- data.frame(
+  "Szenario" = "old",
+  "Anzahl" = 0
+)
+
+getSize <- function(data,url){
+  nrowData <- nrow(data %>% filter(size != 0))
+  sizeTable <- sizeTable %>% rbind(data.frame("Szenario" = url, "Anzahl" = nrowData))
+}
+
+for (url in urls){
+  data = read.delim(paste0(beforeURL,url,"/outputFacilitiesFile.tsv"), header = TRUE, sep = "\t")
+  sizeTable <- getSize(data,url)
+}
+
+sizeTable <- sizeTable[-1, ]
+
+sizeTable = sizeTable %>% 
+  mutate(Szenario = factor(Szenario,levels = urls))
+
+plot <- ggplot(sizeTable, aes(x = Szenario, y = Anzahl, fill = Szenario)) +
+  geom_bar(stat = "identity",position="dodge") +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +  # Individuelle Blautöne
+  labs(x = "",
+       y = "Anzahl an belieferten Links",
+       fill = NULL) +
+  theme_minimal()+
+    scale_color_identity(guide = "none") +
+  theme(axis.text = element_text(color = "black"),axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+ggsave(paste0(beforeURL,"Analyse/BelieferteLinks.png"), plot, width = 6, height = 3)
+
+print(plot)
+
+```
+
+
+```{r}
+#Vergleich Prozente verschiedene Szenarien
+leergänger <- data.frame(
+  demand = c(0)
+)
+
+
+plotPackagesPerPerson <- function(data,url){
+  
+  #column name
+  name = paste0(url)
+
+  # Count the number of persons with zero demand
+
+  zero_demand_count <- nrow(data %>% filter(demand == 0))
+
+  #count persons
+  totalPersons <- nrow(data)
+  print(totalPersons)
+  print(zero_demand_count)
+
+  #group
+  graph <- data %>% filter(demand == 0) %>%
+     group_by(demand) %>%
+      summarize(frequency = n()) %>%
+      mutate(!!name := frequency/(totalPersons)) %>%
+    select(-c(frequency))
+
+  #join
+  leergänger <- leergänger %>% left_join(graph)
+  
+  return(leergänger)
+}
+
+
+for (url in urls){
+  data = read.table(paste0(beforeURL,url,"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+  leergänger <- plotPackagesPerPerson(data,url)
+}
+
+
+
+leergänger <- leergänger %>%
+  pivot_longer(!demand, names_to = "Szenario", values_to = "Anteil")
+
+leergänger[is.na(leergänger)] <- 0
+
+level =  urls %>% gsub("_", "\n", .)%>%
+ gsub("And", " And", .)%>%
+  gsub("De", " De", .)
+
+leergänger = leergänger %>% 
+  mutate(across(Szenario, ~ gsub("_", "\n", .)))%>%
+  mutate(across(Szenario, ~ gsub("And", " And", .)))%>%
+  mutate(across(Szenario, ~ gsub("De", " De", .))) %>%
+  mutate(Szenario = factor(Szenario,levels = level))
+
+#Anteil an Personen mit 0 Paketen
+plot <- ggplot(leergänger, aes(x = Szenario, y = Anteil, fill = Szenario)) +
+  geom_bar(stat = "identity",position="dodge", width = 0.7) +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +  # Individuelle Blautöne
+  labs(y = NULL,x=NULL) +
+  theme_minimal()+
+  geom_text(aes(label = paste0(sprintf("%.2f", Anteil * 100), " %"), 
+              vjust = ifelse(Anteil < 0.5, -0.2, -0.2),
+              color = ifelse(Anteil < 0.5, "black", "black")),  
+          position = position_dodge(width = 0.9),
+              angle = 0,
+          size=2.5)+
+    scale_color_identity(guide = "none")  +
+  theme(axis.line.y = element_blank(),  # Y-Achse Linie entfernen
+    axis.ticks.y = element_blank(), # Y-Achse Ticks entfernen
+    panel.grid.major = element_blank(),  # Entfernt die Hauptgitterlinien
+    panel.grid.minor = element_blank(),     
+    axis.line = element_line(color = "black", linewidth   = 0.2),
+    legend.position = "none",
+    axis.text = element_text(color = "black"))+
+  coord_cartesian(ylim = c(0, 1.2))+
+  scale_x_discrete(labels = label_wrap(10)) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(scale = 100))
+ 
+ggsave(paste0(beforeURL,"Analyse/Leergänger.png"), plot, width = 8, height = 2)
+
+print(plot)
+
+```
+
+```{r}
+#Expected demand
+
+results <- data.frame()
+agents <- data.frame()
+
+getExpectedNumbers <- function(data,url,results,agents){
+  
+  expectedDemand = 0.0686*nrow(data)
+  realDemand = sum(data$demand)
+  agentNum = nrow(data)
+  
+  if(grepl("Upsampling",url)){
+    if(grepl("1pc",url)){
+      expectedDemand = expectedDemand*100
+    }else
+       expectedDemand = expectedDemand*10
+  }
+  
+  result <- data.frame(
+    type = c("erwartete Nachfrage","tatsächl. Paketmenge mit\nBerücksichtigung der Altersstr."),
+    Anzahl = c(expectedDemand,realDemand),
+    Szenario = c(url,url)
+  )
+  
+  agent <- data.frame(
+    Agenten = agentNum,
+    Szenario = url
+  )
+  
+  if (nrow(results) == 0) {
+      results <- result
+      agents <- agent
+    } else {
+      results <- rbind(results,result)
+      agents <- rbind(agents,agent)
+    }
+ 
+  return(list(results = results, agents = agents))
+}
+
+for (url in urlsUpsampledDemand){
+  data = read.table(paste0(beforeURL,url,"/outputDemandPerPersonFile.tsv"), header = TRUE, sep = "\t")
+  res <- getExpectedNumbers(data, url, results, agents)
+  results <- res$results
+  agents <- res$agents
+}
+
+fakeDF <- data.frame(
+  type = rep("tatsächl. Paketmenge ohne\nBerücksichtigung der Altersstr.",3),
+  Anzahl = c(452,1992,2034),
+  Szenario = urlsUpsampledDemand
+  )
+
+results <- results %>% rbind(fakeDF)
+
+results <- results %>% 
+  mutate(Anzahl = as.numeric(Anzahl)) %>% 
+  mutate(Szenario = factor(Szenario,levels = urlsUpsampledDemand))
+
+plot <- ggplot(results, aes(x = Szenario, y = Anzahl, fill = type)) +
+  geom_bar(stat = "identity",position="dodge") +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +  # Individuelle Blautöne
+  labs(x = "",
+       y = "Anzahl Pakete",
+       fill = NULL) +
+  theme_minimal()+
+    scale_color_identity(guide = "none") +
+  theme(axis.text = element_text(color = "black"),)+
+  geom_text(aes(label = round(Anzahl,0)),
+              color = "black",  
+              angle = 0.9,size=2,
+            vjust = 0.2,
+              position = position_dodge(width = 0.9))+
+  coord_cartesian(ylim = c(0, 2600))+
+  scale_x_discrete(labels = label_wrap(10)) 
+
+ggsave(paste0(beforeURL,"Analyse/ExpectedDemand.png"), plot, width = 6, height = 3)
+
+print(plot)
+
+
+
+agents <- agents %>% mutate(type = "Agenten") %>% rename(Anzahl = Agenten)
+
+resultsAGents <- results %>% rbind(agents)  %>%
+  mutate(Anzahl = as.numeric(Anzahl)) %>% 
+  mutate(Szenario = factor(Szenario,levels = urlsUpsampledDemand))%>%
+  mutate(across(Szenario, ~ gsub(urlsUpsampledDemand[3], "100 %", .)))%>%
+  mutate(across(Szenario, ~ gsub("_", "\n", .)))%>%
+  mutate(across(Szenario, ~ gsub("pc", " %", .))) %>%
+  mutate(across(Szenario, ~ gsub("Random", "Random ", .)))%>%
+  mutate(across(Szenario, ~ gsub("Demand", " Demand", .)))
+
+print(urlsUpsampledDemand[3])
+
+plot <- ggplot(resultsAGents, aes(x = Szenario, y = Anzahl, fill = type)) +
+  geom_bar(stat = "identity",position="dodge",width = 0.9) +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +  # Individuelle Blautöne
+  labs(x = "",
+       y = NULL,
+       fill = NULL) +
+  theme_minimal()+
+    scale_color_identity(guide = "none") +
+ # theme(axis.text.x = element_text(angle = 0, hjust = 0))+
+  geom_text(aes(label = round(Anzahl,0), 
+              hjust = ifelse(Anzahl > 6000, 1.1, -0.2),
+              vjust = 0.5,
+              color = "black"),
+            angle = 90,
+            size=3,
+            position = position_dodge(width = 0.9))+
+    #position = position_dodge(width = 0.9))+
+  theme(axis.text = element_text(color = "black"),
+        axis.text.y = element_blank(),  # Entfernt die Y-Achsen-Labels
+    axis.line.y = element_blank(),  # Y-Achse Linie entfernen
+    axis.ticks.y = element_blank(), # Y-Achse Ticks entfernen
+    panel.grid.major = element_blank(),  # Entfernt die Hauptgitterlinien
+    panel.grid.minor = element_blank(),     
+    axis.line = element_line(color = "black", linewidth   = 0.2))+
+  coord_cartesian(ylim = c(0, 32000))+
+  scale_x_discrete(labels = label_wrap(10)) +
+  scale_y_continuous(expand = c(0,0))
+
+ggsave(paste0(beforeURL,"Analyse/AgentenVergleich_upsampled.png"), plot, width = 6, height = 3)
+
+print(plot)
+```
+
+
+
+```{r}
+# Tabelle mit Nachfrage je Szenario (Übersicht)
+#age group share
+comparisionNoUp <- data.frame(
+  "age" = c("bis 15","16 bis 25","26 bis 45","46 bis 65", "66 bis 75","76 oder älter"),
+  "lower" = c(0,16,26,46,66,76)
+)
+
+#Persons with demand
+modifyTable <- function(data,url){
+  name1 <- paste0(url," Personen")
+  name2 <- paste0(url,"davon mit Nachfrage")
+  data <- data %>% select(-c(ageGroup)) %>% 
+    rename(!!name1 := totalPersons) %>% 
+    rename(!!name2 := personsWithDemand) 
+  comparisionNoUp <- comparisionNoUp %>% left_join(data) 
+  return(comparisionNoUp)
+}
+
+for (url in urls){
+  data = read.table(paste0(beforeURL,url,"/outputAgeGroupDemandShareFile.tsv"), header = TRUE, sep = "\t")
+  comparisionNoUp = modifyTable(data,url)
+}
+
+comparisionNoUp <- comparisionNoUp %>% 
+  select(-c(lower,upper)) %>%
+  rename(Altersgruppe = age) %>%
+  rename("Anteil mit Nachfrage" = share)
+
+write.csv(comparisionNoUp, file = paste0(beforeURL,"/Analyse/",url,"_compareDemandDistr.csv"), row.names = FALSE)
+
+comparisionNoUpSum <- comparisionNoUp %>% 
+  select(-c(Altersgruppe))
+colSums(comparisionNoUpSum)
+
+
+#Tabelle 2 Nachfrage##############################
+
+#demand share
+comparisionNoUp1 <- data.frame(
+  "age" = c("bis 13","14 bis 19","20 bis 29","30 bis 39", "40 bis 49","50 bis 59","60 bis 69", "70 oder älter"),
+  "lower" = c(0,14,20,30,40,50,60,70)
+)
+
+#Persons with demand
+modifyTable <- function(data1,url){
+  name1 <- paste0(url," Personen mit Nachfrage")
+  newdemand <- paste0(url,"_demand")
+  data1 <- data1 %>% select(-c(ageGroup,ignoredPersons)) %>% 
+    rename(!!name1 := personsWithDemand)%>% 
+    rename(!!newdemand := demand)
+  comparisionNoUp1 <- comparisionNoUp1 %>% left_join(data1) 
+  return(comparisionNoUp1)
+}
+
+for (url in urls){
+  data1 = read.table(paste0(beforeURL,url,"/outputDemandDistrPerAgeGroup.tsv"), header = TRUE, sep = "\t")
+  comparisionNoUp1 = modifyTable(data1,url)
+}
+comparisionNoUp1 <- comparisionNoUp1 %>% 
+  select(-c(lower,upper)) %>%
+  rename(Altersgruppe = age) %>%
+  rename("Anteil mit Nachfrage" = share)
+comparisionNoUp1[comparisionNoUp1=="null"] <- 0
+comparisionNoUp1$`1pc Personen mit Nachfrage`<- as.numeric(comparisionNoUp1$`1pc Personen mit Nachfrage`)
+comparisionNoUp1$`10pc Personen mit Nachfrage`<- as.numeric(comparisionNoUp1$`10pc Personen mit Nachfrage`)
+comparisionNoUp1$`100pc Personen mit Nachfrage`<- as.numeric(comparisionNoUp1$`100pc Personen mit Nachfrage`)
+
+write.csv(comparisionNoUp1, file = paste0(beforeURL,"/Analyse/",url,"_compareDemandDistrPerAgeGroup.csv"), row.names = FALSE)
+
+comparisionNoUpSum1 <- comparisionNoUp1 %>% 
+  select(-c(Altersgruppe))
+colSums(comparisionNoUpSum1)
+
+
+
+```
+
+```{r}
+library(ggplot2)
+library(scales) 
+
+# Beispiel-Daten erstellen
+data <- data.frame(
+  Demand = factor(c("1 % Upsampling Demand", "10 % Upsampling Demand", "100 % Upsampling Demand"), 
+                  levels = c("1 % Upsampling Demand", "10 % Upsampling Demand", "100 % Upsampling Demand")),
+  Agents = c(271, 1422, 29849),
+  ExpectedDemand = c(1869, 1992, 2034),
+  ActualWithAge = c(225, 1904, 2034),
+  ActualWithoutAge = c(452, 1982, 2034)
+)
+
+# Ersetzuen der Spaltennamen
+column_names_old <- c("Agents", "ExpectedDemand", "ActualWithAge", "ActualWithoutAge")
+column_names_new <- c("Agenten", 
+                      "erwartete Nachfrage", 
+                      "tatsächl. Paketmenge mit\nBerücksichtigung der Altersstr.", 
+                      "tatsächl. Paketmenge ohne\nBerücksichtigung der Altersstr.")
+
+# Namen mit einer Schleife ersetzen
+names(data)[names(data) %in% column_names_old] <- column_names_new
+
+# Daten in langes Format umwandeln
+data_long <- pivot_longer(data, 
+                          cols = column_names_new,
+                          names_to = "Category", values_to = "Value")
+
+
+# Balkendiagramm erstellen
+plot <- ggplot(data_long, aes(x = Demand, y = Value, fill = Category)) +
+  geom_bar(stat = "identity",position="dodge",width = 0.9) +
+  scale_fill_manual(values = c("#BAFFFC","#75D2D7","#2FA4B1","#217083","#133C55","#0F7365","#08B99D","#00FFD4")) +  # Individuelle Blautöne
+  labs(x = "",
+       y = "Agenten/ Pakete",
+       fill = NULL) +
+  theme_minimal()+
+    scale_color_identity(guide = "none") +
+ # theme(axis.text.x = element_text(angle = 0, hjust = 0))+
+  geom_text(aes(label = format(round(Value,0), big.mark = ".", decimal.mark = ",", scientific = FALSE), 
+              hjust = ifelse(Value > 6000, 1.1, -0.2),
+              vjust = 0.5,
+              color = "black"),
+            angle = 90,
+            size=3,
+            position = position_dodge(width = 0.9))+
+    #position = position_dodge(width = 0.9))+
+  theme(axis.text = element_text(color = "black"),
+        axis.text.y = element_blank(),  # Entfernt die Y-Achsen-Labels
+    axis.line.y = element_blank(),  # Y-Achse Linie entfernen
+    axis.ticks.y = element_blank(), # Y-Achse Ticks entfernen
+    panel.grid.major = element_blank(),  # Entfernt die Hauptgitterlinien
+    panel.grid.minor = element_blank(),     
+    axis.line = element_line(color = "black", linewidth   = 0.2))+
+  coord_cartesian(ylim = c(0, 32000))+
+  scale_x_discrete(labels = label_wrap(10)) +
+  scale_y_continuous(expand = c(0,0),
+                     trans = "sqrt", 
+                     breaks = c(0, 50, 500, 2000, 5000, 10000, 30000), 
+                     labels = comma)
+
+ggsave(paste0("Analyse/AgentenVergleich_upsampled.png"), plot, width = 6, height = 3)
+
+print(plot)
+```
+

@@ -1,0 +1,215 @@
+---
+title: "Vehicle stats"
+author: "Ana"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+library(viridis)
+library(sf)
+library(scales)
+library(purrr)
+library(stringr)
+```
+
+```{r}
+beforeURL <- "../23_Tourenplanung_combined_0.14_DHL/"
+cities <- c("Berlin","Lausitz")
+urls <- c("toRandomLinks",
+          "toRandomPersons",
+          "toPersonsByAge")
+urlsAGE <- c("perPopulation","perPopulationAndAge")
+afterURL <- "/analysis/"
+Zustellquote = 1.5
+
+beforeURL <- "../30_Tourenplanung_DHL_0.14_big/"
+cities <- c("Berlin")
+urls <- c("toRandomLinks_small",
+          "toRandomPersons_small",
+          "toRandomPersons_big",
+          "toPersonsByAge_small",
+          "toPersonsByAge_big")
+urlsAGE <- urls
+afterURL <- "/analysis/"
+Zustellquote = 1.5
+
+
+beforeURL <- "../311_Tourenplanung_DHL_0.14_Stoppzeit/"
+cities <- c("Berlin")
+urls <- c("toPersonsByAge_120s",
+          "toPersonsByAge_150s",
+          "toPersonsByAge_180s",
+          "toPersonsByAge_210s")
+urlsAGE <- urls
+afterURL <- "/analysis/"
+Zustellquote = 1.7
+
+#shape
+beforeURL <- "../34_Tourenplanung_DHL_shape/"
+cities <- c("Berlin")
+urls <- c("250.000 per shape",
+          "147.000 per shape",
+          "0.14 packages per person")
+urlsAGE <- urls
+afterURL <- "/analysis/"
+Zustellquote = 1.5
+
+beforeURL <- "../34_Tourenplanung_DHL_shape/"
+cities <- c("Lausitz")
+urls <- c("14.210 per shape",
+          "0.14 packages per person")
+urlsAGE <- urls
+afterURL <- "/analysis/"
+Zustellquote = 1.7
+
+#upsampling
+beforeURL <- "../40_Tourenplanung_Upsampling/"
+cities <- c("Berlin_toRandomPersons","Lausitz_toRandomPersons")
+urls <- c("1pc_UpsamplingDemand",
+          "1pc_UpsamplingDemandAndPoisson",
+          "10pc_UpsamplingDemand",
+          "10pc_UpsamplingDemandAndPoisson",
+          "100pc_toRandomPersons")
+urlsAGE <- urls
+afterURL <- "/analysis/"
+Zustellquote = 1.7
+
+#noupsampling
+beforeURL <- "../40_Tourenplanung_Upsampling/"
+cities <- c("Berlin_toRandomPersons","Lausitz_toRandomPersons")
+urls <- c("10pc_noUpsampling",
+          "100pc_toRandomPersons")
+urlsAGE <- urls
+afterURL <- "/analysis/"
+Zustellquote = 1.7
+
+#noupsampling
+beforeURL <- "../50_Tourenplanung_combined_0.14_DHL_Tourdauer/"
+cities <- c("Berlin","Lausitz")
+urls <- c("toPersonsByAge_6h",
+          "toPersonsByAge_8h",
+          "toPersonsByAge_9.5h",
+          "toRandomPersons_6h",
+          "toRandomPersons_8h",
+          "toRandomPersons_9.5h")
+urlsAGE <- urls
+afterURL <- "/analysis/"
+Zustellquote = 1.5
+
+
+```
+
+```{r}
+#Total stats ######################################################################
+totalVehicleStats <- data.frame()
+
+getNumberOfVehicles <- function(data,url,totalVehicleStats,city,load){
+  
+  data <- data %>% left_join(load)
+  
+ result <- data.frame(
+    "Ansatz" = paste0(city, "_", url),
+    "Fahrzeuge" = nrow(data),
+    "Durchschn. Kilometer" = round(mean(data$travelDistance.km., na.rm = TRUE), 2),
+    "Durchschn. Tourdauer" = round(mean(data$tourDuration.h., na.rm = TRUE), 2),
+    "Durchschn. Anzahl Pakete" = round(mean(data$maxLoad, na.rm = TRUE), 2),
+    "Durchschn. Zeit je Paket" = round(mean((data$tourDuration.s. - data$travelTime.s.) / data$maxLoad, na.rm = TRUE), 2),
+    "Durchschn. erwartete Stopps" = round(mean(data$maxLoad / Zustellquote, na.rm = TRUE), 2),
+    "Maximale Stopps" = max(data$maxLoad / Zustellquote, na.rm = TRUE)
+  )
+  
+    if (nrow(totalVehicleStats) == 0) {
+        totalVehicleStats <- result
+    } else {
+        totalVehicleStats <- rbind(totalVehicleStats, result)
+    }
+  
+  return(totalVehicleStats)
+}
+
+for (city in cities) {
+  for (url in urls) {
+    data = read.delim(paste0(beforeURL,city,"/",url,afterURL,"TimeDistance_perVehicle.csv"), header = TRUE, sep = ";")
+    load = read.delim(paste0(beforeURL,city,"/",url,afterURL,"Load_perVehicle.csv"), header = TRUE, sep = ";")
+    totalVehicleStats <- getNumberOfVehicles(data,url,totalVehicleStats,city,load)
+    
+  }
+}
+
+
+
+#stats per vehicle
+vehicleStats <- data.frame()
+
+getVehicleStats <- function(data,url,vehicleStats,city, load){
+  
+  load <- load %>%
+    select(c(vehicleId, maxLoad, load.state.during.tour)) %>%
+    mutate(load.state.during.tour = map(load.state.during.tour, ~ as.numeric(unlist(strsplit(gsub("\\[|\\]", "", .x), ","))))) %>%
+    mutate(max_index = map_int(load.state.during.tour, which.max)) %>%
+    mutate(jobs = map_int(load.state.during.tour, length) - max_index) %>%
+    select(-c(max_index))
+  
+  result <- data %>% 
+    select(c(vehicleId,tourDuration.s.,travelDistance.km.,travelTime.s.)) %>%
+    mutate("Ansatz" = paste0(city,"_",url)) %>%
+    left_join(load)
+  
+    if (nrow(vehicleStats) == 0) {
+        vehicleStats <- result
+    } else {
+        vehicleStats <- rbind(vehicleStats, result)
+    }
+}
+
+for (city in cities) {
+  for (url in urls) {
+    data = read.delim(paste0(beforeURL,city,"/",url,afterURL,"TimeDistance_perVehicle.csv"), header = TRUE, sep = ";")
+    load = read.delim(paste0(beforeURL,city,"/",url,afterURL,"Load_perVehicle.csv"), header = TRUE, sep = ";")
+    vehicleStats <- getVehicleStats(data,url,vehicleStats,city, load)
+  }
+}
+
+vehicleStatsDetail <- vehicleStats %>% select(-load.state.during.tour) %>%
+  mutate(tourDuration.h. = tourDuration.s./60/60) %>% 
+  mutate(serviceTime = (tourDuration.s.- travelTime.s.)/60) %>%
+  mutate(serviceTimePerPackage = serviceTime/maxLoad) %>%
+  mutate(expectedStops = round(maxLoad/Zustellquote),0) 
+
+summary(vehicleStatsDetail)
+
+write.csv(totalVehicleStats, file = paste0(beforeURL,"Analyse/totalVehicleStats.csv"), row.names = FALSE, na = "NA", quote = TRUE)
+write.csv(vehicleStatsDetail, file = paste0(beforeURL,"Analyse/vehicleStats.csv"), row.names = FALSE, na = "NA", quote = TRUE)
+
+vehicleStatsDetail <- vehicleStatsDetail %>% 
+  mutate("vehicleTypeId" = Ansatz) %>%
+  mutate("travelTime[h]" = travelTime.s./60/60) %>%
+  rename("tourDuration[h]" = tourDuration.h.) %>%
+  rename("travelDistance[km]" = travelDistance.km.)
+
+write.csv(vehicleStatsDetail, file = paste0(beforeURL,"Analyse/analysis/TimeDistance_perVehicle.csv"), 
+            row.names = FALSE, na = "NA", quote = FALSE)
+
+
+vehicleStatsDetail_Berlin <- vehicleStatsDetail %>% filter(str_detect(vehicleTypeId, "Berlin")) %>% 
+  mutate(across(vehicleTypeId, ~ gsub("Berlin_", "", .)))
+
+write.csv(vehicleStatsDetail_Berlin, file = paste0(beforeURL,"Analyse/analysis/TimeDistance_perVehicle_Berlin.csv"), 
+            row.names = FALSE, na = "NA", quote = FALSE)
+
+vehicleStatsDetail_Lausitz <- vehicleStatsDetail %>% filter(str_detect(vehicleTypeId, "Lausitz"))
+
+write.csv(vehicleStatsDetail_Lausitz, file = paste0(beforeURL,"Analyse/analysis/TimeDistance_perVehicle_Lausitz.csv"), 
+            row.names = FALSE, na = "NA", quote = FALSE)
+
+```
+
