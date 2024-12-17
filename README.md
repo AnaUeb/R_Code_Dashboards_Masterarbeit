@@ -1,0 +1,1 @@
+Die Dashboards- und der R-Code wurden im Rahmen der Masterarbeit "Java-basierte Generierung einer realitätsnahen Paketnachfrage zur Tourenplanung und Simulation des Paketlieferverkehrs in urbanen und ländlichen Regionen" am Fachgebiet für Verkehrssystemplanung und Verkehrstelematik erstellt. Abgabe: 10.12.2024
